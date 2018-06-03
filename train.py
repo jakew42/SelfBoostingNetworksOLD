@@ -70,6 +70,9 @@ update = list(zip(grads, vars))
 capped_gvs = [(tf.clip_by_value(grad, -1., 1.), var) for grad, var in update]
 train_op = optimizer.apply_gradients(capped_gvs)
 
+print("Trainable Parameters: {}".format(np.sum([np.prod(v.get_shape().as_list()) for v in tf.trainable_variables()])))
+print(tf.trainable_variables())
+
 # initialize session and train
 config = tf.ConfigProto()
 config.gpu_options.allow_growth = True

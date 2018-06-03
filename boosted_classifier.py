@@ -3,6 +3,7 @@ import sonnet as snt
 
 import networks
 
+
 class NaiveBoostedClassifier(snt.AbstractModule):
     def __init__(self, num_blocks, class_num, name='boosted_classifier'):
         super(NaiveBoostedClassifier, self).__init__(name=name)
@@ -11,14 +12,18 @@ class NaiveBoostedClassifier(snt.AbstractModule):
         self._blocks = []
         self._classifiers = []
         with self._enter_variable_scope():
-            self._entry_layer = snt.Sequential([snt.Conv2D(32, 3), tf.nn.elu])
+            self._entry_layer = snt.Sequential(
+                [snt.Conv2D(32, 3, name='entry_conv2d'), tf.nn.elu])
             for i in range(num_blocks):
-                self._blocks.append(networks.ResidualConvBlock(32))
+                self._blocks.append(
+                    networks.ResidualConvBlock(
+                        32, name='residual_conv_block_{}'.format(i)))
                 self._classifiers.append(
-                    snt.Sequential(
-                        [snt.Conv2D(3,3),
-                         tf.layers.Flatten(),
-                         snt.Linear(class_num)]))
+                    snt.Sequential([
+                        snt.Conv2D(3, 3, name='classifier_conv2d_{}'.format(i)),
+                        tf.layers.Flatten(),
+                        snt.Linear(class_num, name='classifier_linear_{}'.format(i))
+                    ]))
 
     def _build(self, inputs):
         logits = []
