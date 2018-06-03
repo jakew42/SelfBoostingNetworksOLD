@@ -5,45 +5,42 @@ import sonnet as snt
 class NaiveBoostedClassifier(snt.AbstractModule):
     def __init__(self, num_blocks, class_num, name='boosted_classifier'):
         super(NaiveBoostedClassifier, self).__init__(name=name)
+        self._class_num = class_num
 
         self._blocks = []
         self._classifiers = []
-        self._alphas = []
         with self._enter_variable_scope():
             self._entry_layer = snt.Conv2D(32, 3)
             for i in range(num_blocks):
                 self._blocks.append(
                     snt.Sequential([
-                        snt.Residual(snt.Conv2D(32, 3)),
-                        snt.Residual(snt.Conv2D(32, 3)),
-                        snt.Residual(snt.Conv2D(32, 3))
+                        snt.Residual(snt.Conv2D(32, 3)), tf.nn.elu,
+                        snt.Residual(snt.Conv2D(32, 3)), tf.nn.elu,
+                        snt.Residual(snt.Conv2D(32, 3)), tf.nn.elu
                     ]))
                 self._classifiers.append(
                     snt.Sequential(
-                        [tf.layers.Flatten(),
+                        [snt.Conv2D(3,3),
+                         tf.layers.Flatten(),
                          snt.Linear(class_num)]))
-                self._alphas.append(
-                    tf.get_variable(
-                        'alpha_{}'.format(i),
-                        initializer=tf.constant(1.),
-                        dtype=tf.float32,
-                        trainable=False),
-                )  # THIS SHOULD BE UPDATED TO ADABOOST NUM
 
     def _build(self, inputs):
         logits = []
-        contributions = []
+        h_ks = []
         x = self._entry_layer(inputs)
         for i, _ in enumerate(self._blocks):
             x = self._blocks[i](x)
             c = self._classifiers[i](x)
             logits.append(c)
-            contributions.append(self._alphas[i] * c)
+            probs = tf.nn.softmax(c)
+            hk_inner_prod = tf.constant(
+                (1 / self._class_num),
+                dtype=tf.float32,
+                shape=(self._class_num, self._class_num))
+            hk_inner_prod = tf.matrix_set_diag(hk_inner_prod,
+                                               tf.ones([self._class_num]))
+            block_h_k = (1 / self._class_num) * tf.matmul(probs, hk_inner_prod)
+            h_ks.append(block_h_k)
 
-    #p_k = tf.reduce_sum(label_ph * classification, axis=1)
-    #p_other = (tf.reduce_sum(classification, axis=1) - p_k) / class_num
-    #h_k = (class_num - 1)(tf.log(p_k) - p_other)
-
-        final_classification = tf.accumulate_n(
-            contributions) / tf.accumulate_n(self._alphas)
+        final_classification = tf.accumulate_n(h_ks)
         return final_classification, logits

@@ -12,6 +12,7 @@ import util
 parser = argparse.ArgumentParser(description='Self-Boosting Network Training.')
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--epochs', type=int, default=100)
+parser.add_argument('--blocks', type=int, default=5)
 args = parser.parse_args()
 
 # load the data
@@ -31,22 +32,29 @@ label_ph = tf.placeholder(tf.int32, shape=label_shape)  # should be one-hot
 final_classification, weak_logits = classifier(data_ph)
 weak_classifications = [tf.nn.softmax(logits) for logits in weak_logits]
 
+correct_prop = tf.count_nonzero(
+    tf.equal(tf.argmax(final_classification, 1), tf.argmax(label_ph, 1)),
+    dtype=tf.float32) / tf.constant(
+        args.batch_size, dtype=tf.float32)
+
+
 def feed_dict_fn():
     data, labels = next(train_gen)
     return {data_ph: data, label_ph: labels}
+
 
 # calculate boosting weights
 weights = tf.constant(
     1. / args.batch_size, dtype=tf.float32, shape=(args.batch_size, ))
 losses = []
-for classification in weak_classifications:
+for i, classification in enumerate(weak_classifications):
     scale = -(float(class_num) - 1.) / float(class_num)
     weights = weights * tf.reduce_sum(
         tf.exp(scale *
                (tf.to_float(label_ph) * tf.log(classification + 1e-10))),
         axis=1)
     losses.append(weights * tf.nn.sparse_softmax_cross_entropy_with_logits(
-        labels=tf.argmax(label_ph, axis=1), logits=classification))
+        labels=tf.argmax(label_ph, axis=1), logits=weak_logits[i]))
 
 # calculate gradients
 optimizer = tf.train.AdamOptimizer()
@@ -67,11 +75,12 @@ with tf.Session(config=config) as session:
     session.run(tf.global_variables_initializer())
     for epoch in range(args.epochs):
         print("EPOCH {}".format(epoch))
-        norms = util.run_epoch_ops(
+        norms, acc = util.run_epoch_ops(
             session,
             train_data.shape[0] // args.batch_size,
             silent_ops=[train_op],
-            verbose_ops=[out_grads],
+            verbose_ops=[out_grads, correct_prop],
             feed_dict_fn=feed_dict_fn,
             verbose=True)
         print(norms)
+        print(acc)
