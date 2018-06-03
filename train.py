@@ -24,7 +24,8 @@ train_gen = data.parallel_data_generator([train_data, train_labels],
                                          args.batch_size)
 
 # define the model
-classifier = boosted_classifier.NaiveBoostedClassifier(3, label_shape[1])
+classifier = boosted_classifier.NaiveBoostedClassifier(args.blocks,
+                                                       label_shape[1])
 
 # build model
 data_ph = tf.placeholder(tf.float32, shape=data_shape)
@@ -46,19 +47,20 @@ def feed_dict_fn():
 # calculate boosting weights
 weights = tf.constant(
     1. / args.batch_size, dtype=tf.float32, shape=(args.batch_size, ))
-losses = []
+weighted_losses = []
 for i, classification in enumerate(weak_classifications):
     scale = -(float(class_num) - 1.) / float(class_num)
     weights = weights * tf.reduce_sum(
         tf.exp(scale *
                (tf.to_float(label_ph) * tf.log(classification + 1e-10))),
         axis=1)
-    losses.append(weights * tf.nn.sparse_softmax_cross_entropy_with_logits(
-        labels=tf.argmax(label_ph, axis=1), logits=weak_logits[i]))
+    weighted_losses.append(
+        weights * tf.nn.sparse_softmax_cross_entropy_with_logits(
+            labels=tf.argmax(label_ph, axis=1), logits=weak_logits[i]))
 
 # calculate gradients
 optimizer = tf.train.AdamOptimizer()
-grads_and_vars = [optimizer.compute_gradients(l) for l in losses]
+grads_and_vars = [optimizer.compute_gradients(l) for l in weighted_losses]
 vars = list(zip(*grads_and_vars[0]))[1]
 grads = [[v if v is not None else 0 for v in list(zip(*gv))[0]]
          for gv in grads_and_vars]
@@ -82,5 +84,5 @@ with tf.Session(config=config) as session:
             verbose_ops=[out_grads, correct_prop],
             feed_dict_fn=feed_dict_fn,
             verbose=True)
-        print(norms)
-        print(acc)
+        print("Gradient norm: " + str(norms))
+        print("Accuracy: " + str(acc))

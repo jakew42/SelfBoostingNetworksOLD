@@ -1,6 +1,7 @@
 import tensorflow as tf
 import sonnet as snt
 
+import networks
 
 class NaiveBoostedClassifier(snt.AbstractModule):
     def __init__(self, num_blocks, class_num, name='boosted_classifier'):
@@ -12,12 +13,7 @@ class NaiveBoostedClassifier(snt.AbstractModule):
         with self._enter_variable_scope():
             self._entry_layer = snt.Conv2D(32, 3)
             for i in range(num_blocks):
-                self._blocks.append(
-                    snt.Sequential([
-                        snt.Residual(snt.Conv2D(32, 3)), tf.nn.elu,
-                        snt.Residual(snt.Conv2D(32, 3)), tf.nn.elu,
-                        snt.Residual(snt.Conv2D(32, 3)), tf.nn.elu
-                    ]))
+                self._blocks.append(networks.sequential_conv_block())
                 self._classifiers.append(
                     snt.Sequential(
                         [snt.Conv2D(3,3),
