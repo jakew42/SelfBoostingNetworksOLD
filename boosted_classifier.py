@@ -11,9 +11,9 @@ class NaiveBoostedClassifier(snt.AbstractModule):
         self._blocks = []
         self._classifiers = []
         with self._enter_variable_scope():
-            self._entry_layer = snt.Conv2D(32, 3)
+            self._entry_layer = snt.Sequential([snt.Conv2D(32, 3), tf.nn.elu])
             for i in range(num_blocks):
-                self._blocks.append(networks.sequential_conv_block())
+                self._blocks.append(networks.ResidualConvBlock(32))
                 self._classifiers.append(
                     snt.Sequential(
                         [snt.Conv2D(3,3),
