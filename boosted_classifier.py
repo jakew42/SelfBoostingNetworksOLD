@@ -15,9 +15,11 @@ class NaiveBoostedClassifier(snt.AbstractModule):
             self._entry_layer = snt.Sequential(
                 [snt.Conv2D(32, 3, name='entry_conv2d'), tf.nn.elu])
             for i in range(num_blocks):
-                self._blocks.append(
-                    networks.ResidualConvBlock(
-                        32, name='residual_conv_block_{}'.format(i)))
+                self._blocks.append(snt.Sequential([
+                snt.Residual(snt.Conv2D(32, 3)), tf.nn.elu,
+                snt.Residual(snt.Conv2D(32, 3)), tf.nn.elu,
+                snt.Residual(snt.Conv2D(32, 3)), tf.nn.elu
+            ]))
                 self._classifiers.append(
                     snt.Sequential([
                         snt.Conv2D(3, 3, name='classifier_conv2d_{}'.format(i)),

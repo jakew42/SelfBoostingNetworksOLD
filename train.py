@@ -33,11 +33,12 @@ label_ph = tf.placeholder(tf.int32, shape=label_shape)  # should be one-hot
 final_classification, weak_logits = classifier(data_ph)
 weak_classifications = [tf.nn.softmax(logits) for logits in weak_logits]
 
-correct_prop = tf.count_nonzero(
-    tf.equal(tf.argmax(final_classification, 1), tf.argmax(label_ph, 1)),
+class_rate_fn = lambda a: tf.count_nonzero(
+    tf.equal(tf.argmax(a, 1), tf.argmax(label_ph, 1)),
     dtype=tf.float32) / tf.constant(
         args.batch_size, dtype=tf.float32)
-
+correct_weak_props = [class_rate_fn(wc) for wc in weak_classifications]
+correct_final_prop = class_rate_fn(final_classification)
 
 def feed_dict_fn():
     data, labels = next(train_gen)
@@ -79,12 +80,15 @@ with tf.Session(config=config) as session:
     session.run(tf.global_variables_initializer())
     for epoch in range(args.epochs):
         print("EPOCH {}".format(epoch))
-        norms, acc = util.run_epoch_ops(
+        outs = util.run_epoch_ops(
             session,
             train_data.shape[0] // args.batch_size,
             silent_ops=[train_op],
-            verbose_ops=[out_grads, correct_prop],
+            verbose_ops=[out_grads, *correct_weak_props, correct_final_prop],
             feed_dict_fn=feed_dict_fn,
             verbose=True)
+        norms, acc = outs[0], outs[1]
+        weak_accs = outs[2:]
         print("Gradient norm: " + str(norms))
-        print("Accuracy: " + str(acc))
+        print("Weak Classifier Accuracies: " + str(weak_accs))
+        print("Final Accuracy: " + str(acc))
