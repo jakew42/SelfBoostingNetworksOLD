@@ -35,14 +35,14 @@ class NaiveBoostedClassifier(snt.AbstractModule):
             x = self._blocks[i](x)
             c = self._classifiers[i](x)
             logits.append(c)
-            probs = tf.nn.softmax(c)
+            probs = tf.log(tf.nn.softmax(c))
             hk_inner_prod = tf.constant(
-                (1 / self._class_num),
+                (-1 / self._class_num),
                 dtype=tf.float32,
                 shape=(self._class_num, self._class_num))
             hk_inner_prod = tf.matrix_set_diag(hk_inner_prod,
                                                tf.ones([self._class_num]))
-            block_h_k = (1 / self._class_num) * tf.matmul(probs, hk_inner_prod)
+            block_h_k = (self._class_num - 1) * tf.matmul(probs, hk_inner_prod)
             h_ks.append(block_h_k)
 
         final_classification = tf.accumulate_n(h_ks)
