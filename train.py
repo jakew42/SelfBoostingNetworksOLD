@@ -40,6 +40,7 @@ class_rate_fn = lambda a: tf.count_nonzero(
 correct_weak_props = [class_rate_fn(wc) for wc in weak_classifications]
 correct_final_prop = class_rate_fn(final_classification)
 
+
 def feed_dict_fn():
     data, labels = next(train_gen)
     return {data_ph: data, label_ph: labels}
@@ -49,15 +50,18 @@ def feed_dict_fn():
 weights = tf.constant(
     1. / args.batch_size, dtype=tf.float32, shape=(args.batch_size, ))
 weighted_losses = []
+scale = -(float(class_num) - 1.) / float(class_num)
+
 for i, classification in enumerate(weak_classifications):
-    scale = -(float(class_num) - 1.) / float(class_num)
+    weighted_losses.append(
+        weights * tf.nn.sparse_softmax_cross_entropy_with_logits(
+            labels=tf.argmax(label_ph, axis=1), logits=weak_logits[i]))
     weights = weights * tf.reduce_sum(
         tf.exp(scale *
                (tf.to_float(label_ph) * tf.log(classification + 1e-10))),
         axis=1)
-    weighted_losses.append(
-        weights * tf.nn.sparse_softmax_cross_entropy_with_logits(
-            labels=tf.argmax(label_ph, axis=1), logits=weak_logits[i]))
+    weight_means = tf.reduce_mean(weights)
+    weights = weights / (weight_means * tf.to_float(args.batch_size))
 
 # calculate gradients
 optimizer = tf.train.AdamOptimizer()
@@ -71,7 +75,9 @@ update = list(zip(grads, vars))
 capped_gvs = [(tf.clip_by_value(grad, -1., 1.), var) for grad, var in update]
 train_op = optimizer.apply_gradients(capped_gvs)
 
-print("Trainable Parameters: {}".format(np.sum([np.prod(v.get_shape().as_list()) for v in tf.trainable_variables()])))
+print("Trainable Parameters: {}".format(
+    np.sum(
+        [np.prod(v.get_shape().as_list()) for v in tf.trainable_variables()])))
 
 # initialize session and train
 config = tf.ConfigProto()
