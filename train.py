@@ -6,6 +6,7 @@ import sonnet as snt
 import tensorflow as tf
 
 import boosted_classifier
+from networks import blocks, classifiers, stems
 import data.data as data
 import util
 
@@ -13,7 +14,15 @@ parser = argparse.ArgumentParser(description='Self-Boosting Network Training.')
 parser.add_argument('--batch_size', type=int, default=32)
 parser.add_argument('--epochs', type=int, default=100)
 parser.add_argument('--blocks', type=int, default=5)
+parser.add_argument('--block_type', type=str, default='IdentityBlock')
+parser.add_argument('--classifier', type=str, default='ReduceFlattenClassifier')
+parser.add_argument('--stem', type=str, default='BigConvStem')
 args = parser.parse_args()
+
+
+block_dict = {'IdentityBlock':blocks.IdentityBlock, 'ResidualConvBlock':blocks.ResidualConvBlock}
+classifier_dict = {'ReduceFlattenClassifier':classifiers.ReduceFlattenClassifier}
+stem_dict = {'BigConvStem':stems.BigConvStem}
 
 # load the data
 train_data, train_labels, _, _ = data.load_cifar10('./data/')
@@ -23,9 +32,16 @@ class_num = train_labels.shape[1]
 train_gen = data.parallel_data_generator([train_data, train_labels],
                                          args.batch_size)
 
+
+
+
+
 # define the model
-classifier = boosted_classifier.NaiveBoostedClassifier(args.blocks,
-                                                       label_shape[1])
+stem = stem_dict[args.stem](name='stem')
+blocks = [block_dict[args.block_type](name='block_{}'.format(i)) for i in range(args.blocks)]
+classifiers = [classifier_dict[args.classifier](class_num = label_shape[1], name='classifier_{}'.format(i)) for i in range(args.blocks)]
+
+classifier = boosted_classifier.BoostedClassifier(stem, blocks, classifiers, label_shape[1])
 
 # build model
 data_ph = tf.placeholder(tf.float32, shape=data_shape)

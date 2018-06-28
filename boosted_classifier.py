@@ -4,31 +4,36 @@ import sonnet as snt
 import networks
 
 
-class NaiveBoostedClassifier(snt.AbstractModule):
-    def __init__(self, num_blocks, class_num, name='boosted_classifier'):
-        super(NaiveBoostedClassifier, self).__init__(name=name)
+class BoostedClassifier(snt.AbstractModule):
+    """
+    Classifier module which performs self-boosting using a provided network,
+    voting strategy, and boosting strategy. (TODO: the latter two)
+    """
+
+    def __init__(self,
+                 stem,
+                 blocks,
+                 classifiers,
+                 class_num,
+                 name='boosted_classifier'):
+        """
+        Args:
+           stem: An initial module to preprocess the input
+           blocks: A list of modules, applied in succession after stem
+           classifiers: A list parallel to blocks, to be weak learners
+        """
+        super(BoostedClassifier, self).__init__(name=name)
+        assert len(blocks) == len(
+            classifiers), 'Must have equal number of blocks and classifiers'
+        self._blocks = blocks
+        self._classifiers = classifiers
+        self._stem = stem
         self._class_num = class_num
-        self._num_blocks = num_blocks
-        self._blocks = []
-        self._classifiers = []
-        with self._enter_variable_scope():
-            self._entry_layer = snt.Sequential(
-                [snt.Conv2D(32, 3, name='entry_conv2d'), tf.nn.elu])
-            for i in range(self._num_blocks):
-                self._blocks.append(
-                    networks.ResidualConvBlock(
-                        32, name='residual_conv_block_{}'.format(i)))
-                self._classifiers.append(
-                    snt.Sequential([
-                        snt.Conv2D(3, 3, name='classifier_conv2d_{}'.format(i)),
-                        tf.layers.Flatten(),
-                        snt.Linear(self._class_num, name='classifier_linear_{}'.format(i))
-        ]))
 
     def _build(self, inputs):
         logits = []
         h_ks = []
-        x = self._entry_layer(inputs)
+        x = self._stem(inputs)
         for i, _ in enumerate(self._blocks):
             x = self._blocks[i](x)
             c = self._classifiers[i](x)
