@@ -1,4 +1,11 @@
+import os
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import numpy as np
 from tqdm import tqdm
+
 
 def run_epoch_ops(session,
                   steps_per_epoch,
@@ -9,20 +16,65 @@ def run_epoch_ops(session,
     """
     Args:
         - session: tf.Session
-        - ops: ({str: tf.Tensor})
         - steps_per_epoch: (int)
+        - verbose_ops: ({str: tf.Tensor})
+        - feed_dict_fn (callable): called to retrieve the feed_dict
+                                   (dict of placeholders to np arrays)
+        - verbose (bool): whether to use tqdm progressbar on stdout
 
     Return:
         Dict of str to numpy arrays or floats
     """
-    epoch_vals = [0] * len(verbose_ops)
-    if verbose:
-        iterable = tqdm(list(range(steps_per_epoch)))
-    else:
-        iterable = list(range(steps_per_epoch))
-    for i in iterable:
-        step_vals = session.run([silent_ops, verbose_ops], feed_dict=feed_dict_fn())[1]
-        epoch_vals = [
-            i_x[1] + step_vals[i_x[0]] for i_x in enumerate(epoch_vals)
-        ]
-    return [x / float(steps_per_epoch) for x in epoch_vals]
+    verbose_vals = {k: [] for k, v in verbose_ops.items()}
+    iterable = range(steps_per_epoch)
+    if verbose: iterable = tqdm(iterable)
+
+    for _ in iterable:
+        out = session.run(
+           [silent_ops, verbose_ops], feed_dict=feed_dict_fn())[1]
+        verbose_vals = {k: v + [out[k]] for k, v in verbose_vals.items()}
+
+    return {k: np.stack(v) for k, v in verbose_vals.items()}
+
+
+def plot_parallel_histograms(values, save_path, hist_title, xlabel, ylabel):
+    fig, axs = plt.subplots(
+        1,
+        len(values),
+        sharey=True,
+        tight_layout=True,
+        figsize=(4.8 * len(values), 6.4))
+    [
+        histogram(
+            values[i],
+            axs[i],
+            num_bins=100,
+            title=hist_title + ' {}'.format(i),
+            xlabel=xlabel,
+            ylabel=ylabel) for i in range(len(values))
+    ]
+    fig.savefig(save_path)
+
+
+def histogram(x, ax, num_bins, title, xlabel, ylabel):
+    """
+    Args:
+        - x: numpy array of data to plot
+        - ax: matplotlib axis to plot histogram on
+        - num_bins: pass through to matplotlib ax.hist
+        - title: str to put above histogram
+        - xlabel: str to put on x-axis
+        - ylabel: str to put on y-axis
+    """
+    # the histogram of the data
+    n, bins, patches = ax.hist(x, num_bins, density=1, range=[0, 1])
+
+    mu = np.mean(x)
+    sigma = np.std(x)
+    # add a 'best fit' line
+    y = ((1 / (np.sqrt(2 * np.pi) * sigma)) * np.exp(-0.5 * (1 / sigma *
+                                                             (bins - mu))**2))
+    ax.plot(bins, y, '--')
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_title('{}: $\mu={:.3f}$, $\sigma={:.3f}$'.format(title, mu, sigma))

@@ -1,6 +1,8 @@
 # Customizations
 *.npy
 .vscode/
+*.png
+slurm-*.out
 
 led / optimized / DLL files
 __pycache__/

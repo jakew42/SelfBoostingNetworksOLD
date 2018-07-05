@@ -11,6 +11,7 @@ class BoostedClassifier(snt.AbstractModule):
     """
 
     def __init__(self,
+                 voting_strategy,
                  stem,
                  blocks,
                  classifiers,
@@ -18,11 +19,14 @@ class BoostedClassifier(snt.AbstractModule):
                  name='boosted_classifier'):
         """
         Args:
-           stem: An initial module to preprocess the input
-           blocks: A list of modules, applied in succession after stem
-           classifiers: A list parallel to blocks, to be weak learners
+          voting_strategy: A callable which takes a list of logits and returns
+                           the final, boosted classification
+          stem: An initial module to preprocess the input
+          blocks: A list of modules, applied in succession after stem
+          classifiers: A list parallel to blocks, to be weak learners
         """
         super(BoostedClassifier, self).__init__(name=name)
+        self.voting_strategy = voting_strategy
         assert len(blocks) == len(
             classifiers), 'Must have equal number of blocks and classifiers'
         self._blocks = blocks
@@ -31,22 +35,13 @@ class BoostedClassifier(snt.AbstractModule):
         self._class_num = class_num
 
     def _build(self, inputs):
-        logits = []
-        h_ks = []
         x = self._stem(inputs)
+
+        logits = []
         for i, _ in enumerate(self._blocks):
             x = self._blocks[i](x)
             c = self._classifiers[i](x)
             logits.append(c)
-            probs = tf.log(tf.nn.softmax(c))
-            hk_inner_prod = tf.constant(
-                (-1 / self._class_num),
-                dtype=tf.float32,
-                shape=(self._class_num, self._class_num))
-            hk_inner_prod = tf.matrix_set_diag(hk_inner_prod,
-                                               tf.ones([self._class_num]))
-            block_h_k = (self._class_num - 1) * tf.matmul(probs, hk_inner_prod)
-            h_ks.append(block_h_k)
 
-        final_classification = tf.accumulate_n(h_ks)
+        final_classification = self.voting_strategy(logits)
         return final_classification, logits
