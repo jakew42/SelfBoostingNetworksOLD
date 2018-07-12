@@ -12,7 +12,6 @@ class BoostedClassifier(snt.AbstractModule):
 
     def __init__(self,
                  voting_strategy,
-                 stem,
                  blocks,
                  classifiers,
                  class_num,
@@ -21,7 +20,6 @@ class BoostedClassifier(snt.AbstractModule):
         Args:
           voting_strategy: A callable which takes a list of logits and returns
                            the final, boosted classification
-          stem: An initial module to preprocess the input
           blocks: A list of modules, applied in succession after stem
           classifiers: A list parallel to blocks, to be weak learners
         """
@@ -31,12 +29,10 @@ class BoostedClassifier(snt.AbstractModule):
             classifiers), 'Must have equal number of blocks and classifiers'
         self._blocks = blocks
         self._classifiers = classifiers
-        self._stem = stem
         self._class_num = class_num
 
     def _build(self, inputs):
-        x = self._stem(inputs)
-
+        x = inputs
         logits = []
         for i, _ in enumerate(self._blocks):
             x = self._blocks[i](x)

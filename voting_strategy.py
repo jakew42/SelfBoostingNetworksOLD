@@ -3,7 +3,7 @@ A voting strategy is a callable that takes logits from weak learners and combine
 classification.
 
 If the strategy has parameters, it may inherit from `snt.AbstractModule` and optionally implement
-an update method which takes (logits, labels).
+an update method which takes (logits, labels) and returns a TF operation.
 """
 import tensorflow as tf
 import sonnet as snt
@@ -33,6 +33,58 @@ def naive_voting_strategy(logits):
         assert x.shape == logits[0].shape
     return tf.accumulate_n(logits) / float(len(logits))
 
+
+class LinearComboStrategy(snt.AbstractModule):
+    def __init__(self, weak_learner_num, name='linear_combo_strategy'):
+        super(LinearComboStrategy, self).__init__(name=name)
+        with self._enter_variable_scope():
+            self._weights = tf.get_variable(
+                name + '_weights',
+                shape=(weak_learner_num),
+                initializer=tf.ones_initializer,
+                dtype=tf.float32,
+                trainable=False)
+            self.optimizer = tf.train.AdamOptimizer()
+
+    def _build(self, logits):
+        assert len(logits) == self._weights.get_shape().as_list()[0]
+        stopped_logits = [tf.stop_gradient(l) for l in logits]
+        weighted_logits = [
+            a * b for a, b in zip(stopped_logits,
+                                  tf.split(self._weights, len(logits)))
+        ]
+        return tf.accumulate_n(weighted_logits) / float(len(logits))
+
+    def update(self, logits, labels):
+        final_logits = self._build(logits)
+        loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
+            labels=tf.argmax(labels, axis=1), logits=final_logits)
+        return self.optimizer.minimize(loss, var_list=[self._weights])
+
+
+class MLPComboStrategy(snt.AbstractModule):
+    def __init__(self, output_sizes, name='mlp_combo_strategy'):
+        super(MLPComboStrategy, self).__init__(name=name)
+        with self._enter_variable_scope():
+            self._model = snt.Sequential([
+                tf.layers.Dense(size, activation=tf.nn.relu, trainable=False)
+                for size in output_sizes
+            ])
+            self.optimizer = tf.train.AdamOptimizer()
+
+    def _build(self, logits):
+        print('built!')
+        return self._model(tf.concat(logits, axis=1))
+
+    def update(self, logits, labels):
+        final_logits = self._build(logits)
+        loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
+            labels=tf.argmax(labels, axis=1), logits=final_logits)
+        train_vars = [l.non_trainable_variables for l in self._model.layers]
+        print(train_vars)
+        train_vars = [item for sublist in train_vars for item in sublist]
+        print(train_vars)
+        return self.optimizer.minimize(loss, var_list=train_vars)
 
 def SAMME_R_voting_strategy(logits):
     """

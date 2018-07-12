@@ -5,7 +5,8 @@ import numpy as np
 import sonnet as snt
 import tensorflow as tf
 
-import networks
+import networks.stems
+import networks.classifiers
 import data.data as data
 import util
 
@@ -24,12 +25,14 @@ train_gen = data.parallel_data_generator([train_data, train_labels],
                                          args.batch_size)
 
 # define the model
-classifier = networks.ResidualClassifier(args.blocks, 10)
+stem = networks.stems.BigConvStem(name='stem')
+classifier = networks.classifiers.ReduceFlattenClassifier(class_num)
 
 # build model
 data_ph = tf.placeholder(tf.float32, shape=data_shape)
 label_ph = tf.placeholder(tf.int32, shape=label_shape)  # should be one-hot
-final_classification = classifier(data_ph)
+stem_repr = stem(data_ph)
+final_classification = classifier(stem_repr)
 loss = tf.nn.sparse_softmax_cross_entropy_with_logits(
     labels=tf.argmax(label_ph, axis=1), logits=final_classification)
 
@@ -39,11 +42,12 @@ class_rate_fn = lambda a: tf.count_nonzero(
         args.batch_size, dtype=tf.float32)
 correct_final_prop = class_rate_fn(final_classification)
 
+print(tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='stem'))
+saver = tf.train.Saver(var_list=tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='stem'))
 
 def feed_dict_fn():
     data, labels = next(train_gen)
     return {data_ph: data, label_ph: labels}
-
 
 # calculate gradients
 optimizer = tf.train.AdamOptimizer()
@@ -60,11 +64,12 @@ with tf.Session(config=config) as session:
     session.run(tf.global_variables_initializer())
     for epoch in range(args.epochs):
         print("EPOCH {}".format(epoch))
-        acc = util.run_epoch_ops(
+        out_dict = util.run_epoch_ops(
             session,
             train_data.shape[0] // args.batch_size,
             silent_ops=[train_op],
-            verbose_ops=[correct_final_prop],
+            verbose_ops={'accuracy': correct_final_prop},
             feed_dict_fn=feed_dict_fn,
             verbose=True)
-        print("Accuracy: " + str(acc))
+        print("Accuracy: " + str(np.mean(out_dict['accuracy'])))
+    saver.save(session, './BigConvStem')

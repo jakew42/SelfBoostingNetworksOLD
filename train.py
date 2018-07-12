@@ -7,10 +7,11 @@ import sonnet as snt
 import tensorflow as tf
 
 import boosted_classifier
-from networks import blocks, classifiers, stems
-import voting_strategy
+import boosting_strategy
 import data.data as data
 import util
+import voting_strategy
+from networks import blocks, classifiers, stems
 
 parser = argparse.ArgumentParser(description='Self-Boosting Network Training.')
 parser.add_argument(
@@ -22,7 +23,9 @@ parser.add_argument('--block_type', type=str, default='IdentityBlock')
 parser.add_argument(
     '--classifier', type=str, default='ReduceFlattenClassifier')
 parser.add_argument('--stem', type=str, default='BigConvStem')
+parser.add_argument('--load_stem', action="store_true")
 parser.add_argument('--voting_strategy', type=str, default='samme.r')
+parser.add_argument('--boosting_strategy', type=str, default='samme.r')
 parser.add_argument('--log_dir', type=str, default='./logs/')
 metrics_args = parser.add_argument_group('Metrics')
 metrics_args.add_argument('--gradient_norms', action="store_true")
@@ -83,14 +86,24 @@ train_gen = data.parallel_data_generator([train_data, train_labels],
 voting_strategy_dict = {
     'naive':
     voting_strategy.naive_voting_strategy,
+    'linear_combo':
+    voting_strategy.LinearComboStrategy(args.blocks),
+    'mlp_combo':
+    voting_strategy.MLPComboStrategy([50, 20, class_num]),
     'samme.r':
     voting_strategy.SAMME_R_voting_strategy,
     'jake_experimental':
     voting_strategy.JakeExperimentalVotingStrategy(class_num, args.blocks)
 }
 
+boosting_strategy_dict = {
+    'naive': boosting_strategy.non_boosting_strategy,
+    'samme.r': boosting_strategy.SAMME_R_boosting_strategy
+}
+
 # define the model
 stem = stem_dict[args.stem](name='stem')
+tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='stem')
 blocks = [
     block_dict[args.block_type](name='block_{}'.format(i))
     for i in range(args.blocks)
@@ -102,13 +115,16 @@ classifiers = [
 ]
 
 classifier = boosted_classifier.BoostedClassifier(
-    voting_strategy_dict[args.voting_strategy], stem, blocks, classifiers,
+    voting_strategy_dict[args.voting_strategy], blocks, classifiers,
     class_num)
 
 # build model
 data_ph = tf.placeholder(tf.float32, shape=data_shape)
 label_ph = tf.placeholder(tf.int32, shape=label_shape)  # should be one-hot
-final_classification, weak_logits = classifier(data_ph)
+stem_representation = stem(data_ph)
+if args.load_stem:
+    stem_representation = tf.stop_gradient(stem_representation)
+final_classification, weak_logits = classifier(stem_representation)
 weak_classifications = [tf.nn.softmax(logits) for logits in weak_logits]
 wc_confusion_matrices = [
     tf.confusion_matrix(
@@ -118,6 +134,11 @@ wc_confusion_matrices = [
         dtype=tf.int32,
     ) for wl in weak_logits
 ]
+
+# saver needs to be after building the model (so variables exist), but before
+# the definiton of the optimizer
+stem_saver = tf.train.Saver(
+    tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='stem'))
 
 class_rate_fn = lambda a: tf.count_nonzero(
     tf.equal(tf.argmax(a, 1), tf.argmax(label_ph, 1)),
@@ -133,6 +154,16 @@ def feed_dict_fn():
 
 
 # calculate boosting weights
+weights_list = boosting_strategy_dict[args.boosting_strategy](weak_logits,
+                                                              label_ph)
+losses_list = [
+    tf.nn.sparse_softmax_cross_entropy_with_logits(
+        labels=tf.argmax(label_ph, axis=1), logits=wl) for wl in weak_logits
+]
+weighted_losses = [
+    weights * raw_loss for weights, raw_loss in zip(weights_list, losses_list)
+]
+
 weights = tf.constant(
     1. / args.batch_size, dtype=tf.float32, shape=(args.batch_size, ))
 weighted_losses = []
@@ -153,7 +184,7 @@ for i, classification in enumerate(weak_classifications):
 optimizer = tf.train.AdamOptimizer()
 grads_and_vars = [optimizer.compute_gradients(l) for l in weighted_losses]
 vars = list(zip(*grads_and_vars[0]))[1]
-grads = [[v if v is not None else 0. for v in list(zip(*gv))[0]]
+grads = [[g if g is not None else tf.zeros_like(v) for g,v in gv]
          for gv in grads_and_vars]
 total_grads = [sum(gs) for gs in list(zip(*grads))]
 clipped_grads = [tf.clip_by_value(grad, -1., 1.) for grad in total_grads]
@@ -198,6 +229,8 @@ config = tf.ConfigProto()
 config.gpu_options.allow_growth = True
 with tf.Session(config=config) as session:
     session.run(tf.global_variables_initializer())
+    if args.load_stem:
+        stem_saver.restore(session, args.stem)
     for epoch in range(args.epochs):
         print("EPOCH {}".format(epoch))
         outs = util.run_epoch_ops(
