@@ -171,7 +171,7 @@ scale = -(float(class_num) - 1.) / float(class_num)
 
 for i, classification in enumerate(weak_classifications):
     weighted_losses.append(
-        weights * tf.nn.sparse_softmax_cross_entropy_with_logits(
+        tf.stop_gradient(weights) * tf.nn.sparse_softmax_cross_entropy_with_logits(
             labels=tf.argmax(label_ph, axis=1), logits=weak_logits[i]))
     weights = weights * tf.reduce_sum(
         tf.exp(scale *
