@@ -41,3 +41,53 @@ class BoostedClassifier(snt.AbstractModule):
 
         final_classification = self.voting_strategy(logits)
         return final_classification, logits
+
+def build_model(stem_fn,
+                block_fn,
+                classifier_fn,
+                block_num,
+                voting_strategy_fn,
+                batch_size,
+                class_num,
+                data_shape,
+                label_shape,
+                load_stem=False):
+    stem = stem_fn(name='stem')
+    blocks = [block_fn(name='block_{}'.format(i)) for i in range(block_num)]
+    classifiers = [
+        classifier_fn(class_num=class_num, name='classifier_{}'.format(i))
+        for i in range(block_num)
+    ]
+    classifier = BoostedClassifier(
+        voting_strategy_fn, blocks, classifiers, class_num)
+
+    # build model
+    data_ph = tf.placeholder(tf.float32, shape=(batch_size, ) + data_shape[1:])
+    label_ph = tf.placeholder(
+        tf.int32, shape=(batch_size, ) + label_shape[1:])  # should be one-hot
+    stem_representation = stem(data_ph)
+    if load_stem:
+        stem_representation = tf.stop_gradient(stem_representation)
+    final_classification, weak_logits = classifier(stem_representation)
+    weak_classifications = [tf.nn.softmax(logits) for logits in weak_logits]
+
+    metrics = dict()
+    metrics['weak_classifications'] = weak_classifications
+    metrics['wc_confusion_matrices'] = [
+        tf.confusion_matrix(
+            tf.argmax(label_ph, axis=1),
+            tf.argmax(wl, axis=1),
+            num_classes=class_num,
+            dtype=tf.int32,
+        ) for wl in weak_logits
+    ]
+    class_rate_fn = lambda a: tf.count_nonzero(
+        tf.equal(tf.argmax(a, 1), tf.argmax(label_ph, 1)),
+        dtype=tf.float32) / tf.constant(
+            batch_size, dtype=tf.float32)
+    metrics['correct_weak_props'] = [
+        class_rate_fn(wc) for wc in weak_classifications
+    ]
+    metrics['correct_final_prop'] = class_rate_fn(final_classification)
+
+    return data_ph, label_ph, final_classification, weak_logits, classifier, metrics

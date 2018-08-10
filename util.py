@@ -1,10 +1,12 @@
-import os
-
 import itertools
+import os
+from functools import partial
+
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+import tensorflow as tf
 from tqdm import tqdm
 
 
@@ -32,7 +34,7 @@ def run_epoch_ops(session,
 
     for _ in iterable:
         out = session.run(
-           [silent_ops, verbose_ops], feed_dict=feed_dict_fn())[1]
+            [silent_ops, verbose_ops], feed_dict=feed_dict_fn())[1]
         verbose_vals = {k: v + [out[k]] for k, v in verbose_vals.items()}
 
     return {k: np.stack(v) for k, v in verbose_vals.items()}
@@ -80,7 +82,9 @@ def histogram(x, ax, num_bins, title, xlabel, ylabel):
     ax.set_ylabel(ylabel)
     ax.set_title('{}: $\mu={:.3f}$, $\sigma={:.3f}$'.format(title, mu, sigma))
 
-def plot_confusion_matrix(cm, classes,
+
+def plot_confusion_matrix(cm,
+                          classes,
                           title,
                           log_dir,
                           normalize=True,
@@ -102,12 +106,47 @@ def plot_confusion_matrix(cm, classes,
     fmt = '.2f' if normalize else 'd'
     thresh = cm.max() / 2.
     for i, j in itertools.product(range(cm.shape[0]), range(cm.shape[1])):
-        plt.text(j, i, format(cm[i, j], fmt),
-                 horizontalalignment="center",
-                 color="white" if cm[i, j] > thresh else "black")
+        plt.text(
+            j,
+            i,
+            format(cm[i, j], fmt),
+            horizontalalignment="center",
+            color="white" if cm[i, j] > thresh else "black")
 
     plt.tight_layout()
     plt.ylabel('True label')
     plt.xlabel('Predicted label')
     plt.savefig(os.path.join(log_dir, title + '.png'))
     plt.clf()
+
+
+def train(train_op,
+          epochs,
+          steps_per_epoch,
+          verbose_ops_dict,
+          feed_dict_fn,
+          process_metrics_fn,
+          stem=None):
+    stem_saver = tf.train.Saver(
+        tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='stem'))
+    full_metrics = []
+
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth = True
+    with tf.Session(config=config) as session:
+        session.run(tf.global_variables_initializer())
+        if stem:
+            stem_saver.restore(session, stem)
+        for epoch in range(epochs):
+            print("EPOCH {}".format(epoch))
+            outs = run_epoch_ops(
+                session,
+                steps_per_epoch,
+                silent_ops=[train_op],
+                verbose_ops=verbose_ops_dict,
+                feed_dict_fn=partial(feed_dict_fn, epoch=epoch),
+                verbose=True)
+            process_metrics_fn(outs=outs, epoch=epoch)
+            full_metrics.append(outs)
+
+    return full_metrics
