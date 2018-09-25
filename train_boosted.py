@@ -23,7 +23,8 @@ def run(stem_fn,
         classes,
         metrics_options,
         log_dir,
-        load_stem=False):
+        load_stem=False,
+        progressive_training_epochs=5):
     metrics.setup_log_files(log_dir, block_num, metrics_options)
 
     # load data
@@ -53,8 +54,10 @@ def run(stem_fn,
         feed_dict = {data_ph: data, label_ph: labels}
         if training_style == 'progressive':
             val = np.zeros([block_num], dtype=np.float32)
-            val[epoch // 2] = 1.
-            val[(epoch // 2) - 1] = 0.
+            if epoch // progressive_training_epochs > block_num:
+                epoch = block_num * progressive_training_epochs
+            val[epoch // progressive_training_epochs] = 1.
+            val[(epoch // progressive_training_epochs) - 1] = 0.
             feed_dict[weights_scale_ph] = val
         return feed_dict
 

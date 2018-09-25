@@ -37,6 +37,7 @@ def SAMME_R_boosting_strategy(logits, labels):
 
     return weights_list
 
+  
 def selection_decorator(func, idxs):
     def func_wrapper(logits, labels):
         weights_list = func(logits, labels)
@@ -45,15 +46,19 @@ def selection_decorator(func, idxs):
             scale[idx] = 1.
         return [w * s for w, s in zip(weights_list, scale)]
 
+
 # calculate boosting weights
-def calculate_boosted_losses(boosting_strategy_fn, weak_logits, label_ph, batch_size, class_num):
+def calculate_boosted_losses(boosting_strategy_fn, weak_logits, label_ph,
+                             batch_size, class_num):
     weights_list = boosting_strategy_fn(weak_logits, label_ph)
     losses_list = [
         tf.nn.sparse_softmax_cross_entropy_with_logits(
-            labels=tf.argmax(label_ph, axis=1), logits=wl) for wl in weak_logits
+            labels=tf.argmax(label_ph, axis=1), logits=wl)
+        for wl in weak_logits
     ]
     weighted_losses = [
-        weights * raw_loss for weights, raw_loss in zip(weights_list, losses_list)
+        weights * raw_loss
+        for weights, raw_loss in zip(weights_list, losses_list)
     ]
 
     weights = tf.constant(
@@ -64,26 +69,36 @@ def calculate_boosted_losses(boosting_strategy_fn, weak_logits, label_ph, batch_
     weak_classifications = [tf.nn.softmax(logits) for logits in weak_logits]
     for i, classification in enumerate(weak_classifications):
         weighted_losses.append(
-            tf.stop_gradient(weights) * tf.nn.sparse_softmax_cross_entropy_with_logits(
+            tf.stop_gradient(weights) *
+            tf.nn.sparse_softmax_cross_entropy_with_logits(
                 labels=tf.argmax(label_ph, axis=1), logits=weak_logits[i]))
         weights = weights * tf.reduce_sum(
             tf.exp(scale *
-                (tf.to_float(label_ph) * tf.log(classification + 1e-10))),
+                   (tf.to_float(label_ph) * tf.log(classification + 1e-10))),
             axis=1)
         weight_means = tf.reduce_mean(weights)
         weights = weights / (weight_means * tf.to_float(batch_size))
     return weighted_losses
 
+
 def calculate_boosted_gradients(optimizer, weighted_losses, weights_scale):
+    """Scaling the gradients now requires block+classifier pairs to be in TF
+    namespace 'classifier_{i}' where `i` is an integer"""
+    flatten = lambda l: [item for sublist in l for item in sublist]
+
     grads_and_vars = [optimizer.compute_gradients(l) for l in weighted_losses]
     vars = list(zip(*grads_and_vars[0]))[1]
     grads = [[g if g is not None else tf.zeros_like(v) for g, v in gv]
-            for gv in grads_and_vars]
-    grads = [[g * s for g in gs]
-            for gs, s in zip(grads, tf.split(weights_scale, len(grads)))]
+             for gv in grads_and_vars]
     total_grads = [sum(gs) for gs in list(zip(*grads))]
     clipped_grads = [tf.clip_by_value(grad, -1., 1.) for grad in total_grads]
-    final_grads_and_vars = list(zip(clipped_grads, vars))
+    built_grads_and_vars = list(zip(clipped_grads, vars))
+    split_gvs = [[
+        (g * scale, v) for (g, v) in built_grads_and_vars
+        if 'classifier_{}'.format(i) in v.name or 'block_{}'.format(i) in v.name
+    ] for (i, scale) in enumerate(tf.split(weights_scale, len(grads)))]
+    forgotten_gvs = [(g,v) for (g,v) in built_grads_and_vars if 'classifier' not in v.name and 'block' not in v.name]
+    final_grads_and_vars = flatten(split_gvs) + forgotten_gvs
 
     metrics = dict()
     metrics['pre_clip_wc_grads'] = [tf.global_norm(g) for g in grads]

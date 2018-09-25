@@ -120,16 +120,40 @@ def plot_confusion_matrix(cm,
     plt.clf()
 
 
+def build_early_stopping_fn(patience=3):
+    best_rate = 0.0
+    bad_epochs = 0
+
+    def early_stopping_fn(outs):
+        nonlocal best_rate, bad_epochs
+        rate = outs['correct_final_prop']
+        if rate > best_rate:
+            best_rate = rate
+            bad_epochs = 0
+        else:
+            bad_epochs += 1
+        return bad_epochs >= patience
+
+    return early_stopping_fn
+
+
 def train(train_op,
           epochs,
           steps_per_epoch,
           verbose_ops_dict,
           feed_dict_fn,
           process_metrics_fn,
+          early_stopping_fn=build_early_stopping_fn(),
           stem=None):
+    """
+    Args:
+        early_stopping_fn (dict -> bool): callable which returns True if traning should be halted.
+    """
     stem_saver = tf.train.Saver(
         tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='stem'))
-    full_metrics = []
+    final_results = dict()
+    final_results['boosted_classification_rate'] = []
+    final_results['wc_classification_rate'] = []
 
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
@@ -147,6 +171,10 @@ def train(train_op,
                 feed_dict_fn=partial(feed_dict_fn, epoch=epoch),
                 verbose=True)
             process_metrics_fn(outs=outs, epoch=epoch)
-            full_metrics.append(outs)
+            final_results['wc_classification_rate'].append(
+                outs['correct_weak_props'])
+            final_results['boosted_classification_rate'].append(
+                outs['correct_final_prop'])
+            if early_stopping_fn(outs): break
 
-    return full_metrics
+    return final_results
