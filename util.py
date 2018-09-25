@@ -19,14 +19,15 @@ def run_epoch_ops(session,
     """
     Args:
         - session: tf.Session
-        - steps_per_epoch: (int)
-        - verbose_ops: ({str: tf.Tensor})
-        - feed_dict_fn (callable): called to retrieve the feed_dict
+        - steps_per_epoch (int): Number of steps to run
+        - verbose_ops ({str: tf.Tensor}): Tensors whose values should be 
+        - feed_dict_fn (callable): Called to retrieve the feed_dict
                                    (dict of placeholders to np arrays)
         - verbose (bool): whether to use tqdm progressbar on stdout
 
     Return:
-        Dict of str to numpy arrays or floats
+        dict of str to np.array with shape [steps_per_epoch, ...], parallel to
+        the verbose_ops argument
     """
     verbose_vals = {k: [] for k, v in verbose_ops.items()}
     iterable = range(steps_per_epoch)
@@ -121,14 +122,14 @@ def plot_confusion_matrix(cm,
 
 
 def build_early_stopping_fn(patience=3):
-    best_rate = 0.0
+    best_loss = float('inf')
     bad_epochs = 0
 
     def early_stopping_fn(outs):
-        nonlocal best_rate, bad_epochs
-        rate = outs['correct_final_prop']
-        if rate > best_rate:
-            best_rate = rate
+        nonlocal best_loss, bad_epochs
+        loss = np.mean(outs['final_classification_loss'])
+        if loss < best_loss:
+            best_loss = loss
             bad_epochs = 0
         else:
             bad_epochs += 1
@@ -139,21 +140,24 @@ def build_early_stopping_fn(patience=3):
 
 def train(train_op,
           epochs,
-          steps_per_epoch,
+          train_steps_per_epoch,
+          validate_steps_per_epoch,
           verbose_ops_dict,
-          feed_dict_fn,
+          train_feed_dict_fn,
+          validate_feed_dict_fn,
           process_metrics_fn,
           early_stopping_fn=build_early_stopping_fn(),
+          stem_saver=None,
           stem=None):
-    """
-    Args:
-        early_stopping_fn (dict -> bool): callable which returns True if traning should be halted.
-    """
-    stem_saver = tf.train.Saver(
-        tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='stem'))
     final_results = dict()
-    final_results['boosted_classification_rate'] = []
-    final_results['wc_classification_rate'] = []
+    final_results['train'] = dict()
+    final_results['validate'] = dict()
+    final_results['train']['boosted_classification_rate'] = []
+    final_results['validate']['boosted_classification_rate'] = []
+    final_results['train']['wc_classification_rate'] = []
+    final_results['validate']['wc_classification_rate'] = []
+    final_results['train']['final_classification_loss'] = []
+    final_results['validate']['final_classification_loss'] = []
 
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
@@ -163,18 +167,37 @@ def train(train_op,
             stem_saver.restore(session, stem)
         for epoch in range(epochs):
             print("EPOCH {}".format(epoch))
+            print("TRAIN")
             outs = run_epoch_ops(
                 session,
-                steps_per_epoch,
+                train_steps_per_epoch,
                 silent_ops=[train_op],
                 verbose_ops=verbose_ops_dict,
-                feed_dict_fn=partial(feed_dict_fn, epoch=epoch),
+                feed_dict_fn=partial(train_feed_dict_fn, epoch=epoch),
                 verbose=True)
-            process_metrics_fn(outs=outs, epoch=epoch)
-            final_results['wc_classification_rate'].append(
+            process_metrics_fn(outs=outs, epoch=epoch, mode='train')
+            final_results['train']['wc_classification_rate'].append(
                 outs['correct_weak_props'])
-            final_results['boosted_classification_rate'].append(
+            final_results['train']['boosted_classification_rate'].append(
                 outs['correct_final_prop'])
-            if early_stopping_fn(outs): break
+            final_results['train']['final_classification_loss'].append(
+                outs['final_classification_loss'])
+
+            print("validate")
+            validate_outs = run_epoch_ops(
+                session,
+                validate_steps_per_epoch,
+                verbose_ops=verbose_ops_dict,
+                feed_dict_fn=validate_feed_dict_fn,
+                verbose=True
+            )
+            process_metrics_fn(outs=validate_outs, epoch=epoch, mode='validate')
+            final_results['validate']['wc_classification_rate'].append(
+                validate_outs['correct_weak_props'])
+            final_results['validate']['boosted_classification_rate'].append(
+                validate_outs['correct_final_prop'])
+            final_results['validate']['final_classification_loss'].append(
+                validate_outs['final_classification_loss'])
+            if early_stopping_fn(validate_outs): break
 
     return final_results

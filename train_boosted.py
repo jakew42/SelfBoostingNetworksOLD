@@ -23,12 +23,17 @@ def run(stem_fn,
         classes,
         metrics_options,
         log_dir,
-        load_stem=False,
+        load_stem=None,
+        patience=12,
         progressive_training_epochs=5):
+    """
+    Args:
+        load_stem (str): path to the weights file for the stem
+    """
     metrics.setup_log_files(log_dir, block_num, metrics_options)
 
     # load data
-    train_gen, test_gen, data_shape, label_shape, class_num = data.load_data(
+    train_gen, validate_gen, train_data_shape, validate_data_shape, label_shape, class_num = data.load_data(
         dataset_name, batch_size, classes)
 
     data_ph, label_ph, _, weak_logits, classifier, classification_metrics = boosted_classifier.build_model(
@@ -39,10 +44,13 @@ def run(stem_fn,
         voting_strategy_fn,
         batch_size,
         class_num,
-        data_shape,
+        train_data_shape,
         label_shape,
         load_stem=load_stem)
 
+
+    stem_saver = tf.train.Saver(
+        tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='stem'))
     weighted_losses = boosting_strategy.calculate_boosted_losses(
         boosting_strategy_fn, weak_logits, label_ph, batch_size, class_num)
 
@@ -54,11 +62,14 @@ def run(stem_fn,
         feed_dict = {data_ph: data, label_ph: labels}
         if training_style == 'progressive':
             val = np.zeros([block_num], dtype=np.float32)
-            if epoch // progressive_training_epochs > block_num:
-                epoch = block_num * progressive_training_epochs
-            val[epoch // progressive_training_epochs] = 1.
-            val[(epoch // progressive_training_epochs) - 1] = 0.
+            val[epoch // 2] = 1.
+            val[(epoch // 2) - 1] = 0.
             feed_dict[weights_scale_ph] = val
+        return feed_dict
+
+    def validate_feed_dict_fn():
+        data, labels = next(validate_gen)
+        feed_dict = {data_ph: data, label_ph: labels}
         return feed_dict
 
     # calculate gradients
@@ -84,16 +95,20 @@ def run(stem_fn,
         verbose_ops_dict.update(grad_metrics)
 
     # initialize session and train
-    steps_per_epoch = data_shape[0] // batch_size
     process_metrics_fn = functools.partial(
         metrics.process_metrics, log_dir=log_dir, options=metrics_options)
+    early_stopping_fn = util.build_early_stopping_fn(patience=patience)
     full_metrics = util.train(
         train_op,
         epochs,
-        steps_per_epoch,
-        verbose_ops_dict,
-        feed_dict_fn,
-        process_metrics_fn,
-        stem=None)
+        train_steps_per_epoch=train_data_shape[0] // batch_size,
+        validate_steps_per_epoch=validate_data_shape[0] // batch_size,
+        verbose_ops_dict=verbose_ops_dict,
+        train_feed_dict_fn=feed_dict_fn,
+        validate_feed_dict_fn=validate_feed_dict_fn,
+        process_metrics_fn=process_metrics_fn,
+        early_stopping_fn=early_stopping_fn,
+        stem_saver=stem_saver,
+        stem=load_stem)
 
     return full_metrics

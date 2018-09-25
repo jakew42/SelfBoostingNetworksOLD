@@ -89,9 +89,10 @@ def load_data(dataset_name, batch_size, classes=None):
         train_data, train_labels = filter_classes(train_data, train_labels, classes)
         test_data, test_labels = filter_classes(test_data, test_labels, classes)
 
-    data_shape = train_data.shape
+    train_data_shape = train_data.shape
+    test_data_shape = test_data.shape
     label_shape = train_labels.shape
     class_num = train_labels.shape[1]
     train_gen = parallel_data_generator([train_data, train_labels], batch_size)
     test_gen = parallel_data_generator([test_data, test_labels], batch_size)
-    return train_gen, test_gen, data_shape, label_shape, class_num
+    return train_gen, test_gen, train_data_shape, test_data_shape, label_shape, class_num

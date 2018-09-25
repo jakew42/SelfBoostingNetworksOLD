@@ -42,6 +42,7 @@ class BoostedClassifier(snt.AbstractModule):
         final_classification = self.voting_strategy(logits)
         return final_classification, logits
 
+
 def build_model(stem_fn,
                 block_fn,
                 classifier_fn,
@@ -58,8 +59,8 @@ def build_model(stem_fn,
         classifier_fn(class_num=class_num, name='classifier_{}'.format(i))
         for i in range(block_num)
     ]
-    classifier = BoostedClassifier(
-        voting_strategy_fn, blocks, classifiers, class_num)
+    classifier = BoostedClassifier(voting_strategy_fn, blocks, classifiers,
+                                   class_num)
 
     # build model
     data_ph = tf.placeholder(tf.float32, shape=(batch_size, ) + data_shape[1:])
@@ -89,5 +90,8 @@ def build_model(stem_fn,
         class_rate_fn(wc) for wc in weak_classifications
     ]
     metrics['correct_final_prop'] = class_rate_fn(final_classification)
+    metrics[
+        'final_classification_loss'] = tf.nn.sparse_softmax_cross_entropy_with_logits(
+            logits=final_classification, labels=tf.argmax(label_ph, axis=1))
 
     return data_ph, label_ph, final_classification, weak_logits, classifier, metrics

@@ -37,7 +37,7 @@ def SAMME_R_boosting_strategy(logits, labels):
 
     return weights_list
 
-  
+
 def selection_decorator(func, idxs):
     def func_wrapper(logits, labels):
         weights_list = func(logits, labels)
@@ -92,12 +92,14 @@ def calculate_boosted_gradients(optimizer, weighted_losses, weights_scale):
              for gv in grads_and_vars]
     total_grads = [sum(gs) for gs in list(zip(*grads))]
     clipped_grads = [tf.clip_by_value(grad, -1., 1.) for grad in total_grads]
-    built_grads_and_vars = list(zip(clipped_grads, vars))
-    split_gvs = [[
-        (g * scale, v) for (g, v) in built_grads_and_vars
-        if 'classifier_{}'.format(i) in v.name or 'block_{}'.format(i) in v.name
-    ] for (i, scale) in enumerate(tf.split(weights_scale, len(grads)))]
-    forgotten_gvs = [(g,v) for (g,v) in built_grads_and_vars if 'classifier' not in v.name and 'block' not in v.name]
+    built_grads_and_vars = list(zip(clipped_grads, vars)) 
+    split_gvs = [[(g * scale, v) for (g, v) in built_grads_and_vars
+                  if 'classifier_{}'.format(i) in v.name
+                  or 'block_{}'.format(i) in v.name]
+                 for (i,
+                      scale) in enumerate(tf.split(weights_scale, len(grads)))]
+    forgotten_gvs = [(g, v) for (g, v) in built_grads_and_vars
+                     if 'classifier' not in v.name and 'block' not in v.name]
     final_grads_and_vars = flatten(split_gvs) + forgotten_gvs
 
     metrics = dict()
